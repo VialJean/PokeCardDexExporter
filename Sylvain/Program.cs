@@ -1,4 +1,5 @@
 ﻿using HtmlAgilityPack;
+using Microsoft.EntityFrameworkCore;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Interactions;
@@ -10,47 +11,102 @@ using static System.Net.WebRequestMethods;
 
 namespace Sylvain
 {
-    internal class Program
+    internal partial class Program
     {
         const string webhookUrl = "https://discord.com/api/webhooks/1328486528657395803/sr-jfgq2c-WlnQOgzxoTL1zEil3xxtz2w7LpCHc3veCmISMS6Q4Dd-f5o7fX28rGhqGJ";
 
         static async Task Main(string[] args)
         {
-            string[] urls = [
-                "https://www.relictcg.com/collections/nouveautes-pokemon/products/coffret-ultra-premium-amphinobi-ex-fr",
-                "https://www.relictcg.com/products/display-faille-paradoxe-ev04-fr",
-                "https://www.relictcg.com/products/coffret-build-battle-stadium-ecarlate-et-violet-faille-paradoxe-ev04-fr",
-                "https://www.relictcg.com/products/coffret-rugit-lune-ex-faille-paradoxe-ev04-fr",
-                "https://www.relictcg.com/products/coffret-garde-de-fer-ex-faille-paradoxe-ev04-fr",
-                "https://www.relictcg.com/products/coffret-dogrino-ex-faille-paradoxe-ev04-fr",
-                "https://www.relictcg.com/products/tri-pack-ecarlate-et-violet-faille-paradoxe-ev04-fr?variant=47244983075161",
-                "https://www.relictcg.com/products/copie-de-coffret-dresseur-delite-faille-paradoxe-ev04-fr"
-            ];
-            string message = "Voici le titre du produit trouvé : Display - Écarlate et Violet - Faille Paradoxe [EV04] - FR";
-
-            var options = new ChromeOptions();
-            options.AddArgument("--headless"); // Mode headless pour ne pas afficher le navigateur
-            options.AddArgument("--disable-gpu");
-            options.AddArgument("--no-sandbox");
-
-            await SendDiscordMessage(webhookUrl, "Démarrage du scan V2");
-
-            using (IWebDriver driver = new ChromeDriver(options))
+            using (var context = new AppDbContext())
             {
-                var produits = await ScanProductsV2(driver, "https://www.relictcg.com/collections/pokemon");
-                foreach (var produit in produits)
-                {
-                    await SendDiscordMessage(webhookUrl, produit);
-                }
-            }
+                // Appliquer les migrations (crée la base de données si elle n'existe pas)
+                context.Database.EnsureCreated();
+                Console.WriteLine("Base de données initialisée.");
 
-            await SendDiscordMessage(webhookUrl, "Fin du scan V2");
+                var options = new ChromeOptions();
+                options.AddArgument("--headless"); // Mode headless pour ne pas afficher le navigateur
+                options.AddArgument("--disable-gpu");
+                options.AddArgument("--no-sandbox");
+
+                await SendDiscordMessage(webhookUrl, "Démarrage du scan V2");
+
+                using (IWebDriver driver = new ChromeDriver(options))
+                {
+                    var produits = await ScanProductsV2(driver, "https://www.relictcg.com/collections/pokemon");
+                    //var produits = await context.Products.ToListAsync();
+
+                    foreach (var produit in produits)
+                    {
+                        var produitInDb = context.Products.SingleOrDefault(x => x.Site == produit.Site && x.Titre == produit.Titre);
+                        if (produitInDb == null)
+                        {
+                            await context.AddAsync(produit);
+                            await context.SaveChangesAsync();
+
+                        }
+                        await SendDiscordMessage(webhookUrl, produits);
+                    }
+                }
+                await SendDiscordMessage(webhookUrl, "Fin du scan V2");
+            }
 
             Console.ReadLine();
         }
 
+        private static async Task SendDiscordMessage(string webhookUrl, ICollection<Produit> produits)
+        {
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+
+
+                    var payload = new
+                    {
+                        embeds = produits.Select(produit => new
+                        {
+                            title = produit.Site,
+                            description = produit.Titre,
+                            //color = 16711680, // Rouge en RGB décimal
+                            fields = new[]
+                            {
+                                new { name = "Prix", value = produit.Prix, inline = false },
+                                new { name = "Stock", value = produit.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
+                            },
+                            url = produit.Url,
+                            image = new
+                            {
+                                url = produit.Image
+                            },
+                            footer = new
+                            {
+                                text = $"Scan effectué à {DateTime.Now:T}"
+                            }
+                        })
+
+                    };
+
+                    var jsonPayload = new StringContent(
+                        Newtonsoft.Json.JsonConvert.SerializeObject(payload),
+                        Encoding.UTF8,
+                        "application/json"
+                    );
+
+                    HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
+
+                    response.EnsureSuccessStatusCode();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                Debug.WriteLine(ex.Message);
+            }
+        }
+
         static async Task<Produit?> ScanProducts(IWebDriver driver, string searchUrl)
         {
+            string title=string.Empty;
 
             try
             {
@@ -59,7 +115,15 @@ namespace Sylvain
                 await driver.Navigate().GoToUrlAsync(searchUrl);
 
                 var titleElement = driver.FindElement(By.CssSelector("h1.product__title"));
-                string? title = titleElement?.Text;
+
+                if (titleElement == null)
+                {
+                    Console.WriteLine($"Titre introuvable");
+                }
+                else
+                {
+                    title = titleElement?.Text;
+                }
 
                 var buyButtonElement = driver.FindElement(By.ClassName("product-form__submit"));
                 var etat = buyButtonElement.Enabled ? "En stock" : "Epuisé";
@@ -84,7 +148,7 @@ namespace Sylvain
                     Console.WriteLine($"Prix : {price}");
                     Console.WriteLine($"Etat : {etat}");
 
-                    return new Produit(title, etatEnum, price, searchUrl, image, siteName);
+                    return new Produit(Guid.NewGuid(), title, etatEnum, price, searchUrl, image, siteName);
                 }
                 else
                 {
@@ -230,14 +294,6 @@ namespace Sylvain
                     throw new Exception($"Échec de la requête. Code statut : {response.StatusCode}");
                 }
             }
-        }
-
-        record Produit(string Titre, Etat Etat, string Prix, string Url, string Image, string Site);
-
-        public enum Etat
-        {
-            En_stock,
-            Epuise
         }
     }
 }
