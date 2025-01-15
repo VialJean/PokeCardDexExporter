@@ -44,8 +44,9 @@ namespace Sylvain
                             await context.SaveChangesAsync();
 
                         }
-                        await SendDiscordMessage(webhookUrl, produits);
                     }
+                    await SendDiscordMessage(webhookUrl, produits.Where(x=>x.Etat==Etat.En_stock));
+
                 }
                 await SendDiscordMessage(webhookUrl, "Fin du scan V2");
             }
@@ -53,48 +54,51 @@ namespace Sylvain
             Console.ReadLine();
         }
 
-        private static async Task SendDiscordMessage(string webhookUrl, ICollection<Produit> produits)
+        private static async Task SendDiscordMessage(string webhookUrl, IEnumerable<Produit> produits)
         {
             try
             {
                 using (HttpClient client = new HttpClient())
                 {
+                    var batches = produits.Chunk(10);
 
-
-                    var payload = new
+                    foreach (var batch in batches)
                     {
-                        embeds = produits.Select(produit => new
+                        var payload = new
                         {
-                            title = produit.Site,
-                            description = produit.Titre,
-                            //color = 16711680, // Rouge en RGB décimal
-                            fields = new[]
+                            embeds = batch.Select(produit => new
                             {
+                                title = produit.Site,
+                                description = produit.Titre,
+                                //color = 16711680, // Rouge en RGB décimal
+                                fields = new[]
+                                {
                                 new { name = "Prix", value = produit.Prix, inline = false },
                                 new { name = "Stock", value = produit.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
                             },
-                            url = produit.Url,
-                            image = new
-                            {
-                                url = produit.Image
-                            },
-                            footer = new
-                            {
-                                text = $"Scan effectué à {DateTime.Now:T}"
-                            }
-                        })
+                                url = produit.Url,
+                                image = new
+                                {
+                                    url = produit.Image
+                                },
+                                footer = new
+                                {
+                                    text = $"Scan effectué à {DateTime.Now:T}"
+                                }
+                            })
 
-                    };
+                        };
 
-                    var jsonPayload = new StringContent(
-                        Newtonsoft.Json.JsonConvert.SerializeObject(payload),
-                        Encoding.UTF8,
-                        "application/json"
-                    );
+                        var jsonPayload = new StringContent(
+                            Newtonsoft.Json.JsonConvert.SerializeObject(payload),
+                            Encoding.UTF8,
+                            "application/json"
+                        );
 
-                    HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
+                        HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
 
-                    response.EnsureSuccessStatusCode();
+                        response.EnsureSuccessStatusCode();
+                    }
                 }
             }
             catch (Exception ex)
@@ -106,7 +110,7 @@ namespace Sylvain
 
         static async Task<Produit?> ScanProducts(IWebDriver driver, string searchUrl)
         {
-            string title=string.Empty;
+            string title = string.Empty;
 
             try
             {
@@ -132,8 +136,20 @@ namespace Sylvain
                 var priceElement = driver.FindElement(By.ClassName("price-item"));
                 var price = priceElement?.Text;
 
-                var imageElement = driver.FindElement(By.ClassName("image_zoom_box_src"));
-                var image = "https:" + imageElement.GetDomAttribute("src");
+                string image = string.Empty;
+                if (IsElementPresent(driver,By.ClassName("slide_nav")))
+                {
+                    var imageElement = driver.FindElement(By.ClassName("slide_nav"));
+                    var a = imageElement.FindElement(By.TagName("img"));
+                    image = "https:" + a.GetDomAttribute("src");
+                }
+                else
+                {
+                    var imageElement = driver.FindElement(By.ClassName("image_zoom_box_src"));
+                    image = "https:" + imageElement.GetDomAttribute("src");
+                }
+
+                
 
                 Uri uri = new Uri(searchUrl);
                 string host = uri.Host;
@@ -197,9 +213,9 @@ namespace Sylvain
                         }
                     }
 
-                    var nextButtonElement = driver.FindElement(By.CssSelector("a.snize-pagination-next"));
-                    if (nextButtonElement != null)
+                    if (IsElementPresent(driver, By.CssSelector("a.snize-pagination-next")))
                     {
+                        var nextButtonElement = driver.FindElement(By.CssSelector("a.snize-pagination-next"));
                         nextButtonElement.Click();
                         // Attendre la fin de la redirection (par exemple, attendre un changement d'URL)
                         WebDriverWait wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
@@ -294,6 +310,11 @@ namespace Sylvain
                     throw new Exception($"Échec de la requête. Code statut : {response.StatusCode}");
                 }
             }
+        }
+
+        public static bool IsElementPresent(IWebDriver driver, By by)
+        {
+            return driver.FindElements(by).Count > 0;
         }
     }
 }
