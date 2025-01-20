@@ -23,44 +23,100 @@ namespace Sylvain
                 context.Database.EnsureCreated();
                 Console.WriteLine("Base de données initialisée.");
 
+                List<Scan> nouveauxProduits = [];
+                List<Tuple<Scan, float>> ChangementPrix = [];
+                List<Tuple<Scan, Etat>> ChangementStock = [];
+
                 var options = new ChromeOptions();
                 options.AddArgument("--headless"); // Mode headless pour ne pas afficher le navigateur
                 options.AddArgument("--disable-gpu");
                 options.AddArgument("--no-sandbox");
 
-                await SendDiscordMessage(webhookUrl, "Démarrage du scan V2");
+                await SendDiscordMessage(webhookUrl, "Démarrage du scan V3");
 
                 using (IWebDriver driver = new ChromeDriver(options))
                 {
-                    var produits = await ScanProductsV2(driver, "https://www.relictcg.com/collections/pokemon");
+                    var scans = await ScanProductsV2(driver, "https://www.relictcg.com/collections/pokemon");
                     //var produits = await context.Products.ToListAsync();
 
-                    foreach (var produit in produits)
+                    foreach (var scan in scans)
                     {
-                        var produitInDb = context.Products.SingleOrDefault(x => x.Site == produit.Site && x.Titre == produit.Titre);
+                        var produitInDb = context.Products.SingleOrDefault(x => x.Site == scan.Produit.Site && x.Titre == scan.Produit.Titre);
                         if (produitInDb == null)
                         {
-                            await context.AddAsync(produit);
+                            await context.AddAsync(scan.Produit);
+                            await context.AddAsync(scan.ResultatScan);
                             await context.SaveChangesAsync();
+                            nouveauxProduits.Add(scan);
+                        }
+                        else
+                        {
+                            scan.ResultatScan.IdProduit = produitInDb.Id;
 
+                            var listePrix = context.Prix.Where(x => x.IdProduit == produitInDb.Id);
+                            if (listePrix.Any())
+                            {
+                                var dernierPrix = listePrix.OrderBy(x => x.DateScan).LastOrDefault();
+                                if (dernierPrix != null)
+                                {
+
+                                    if (dernierPrix.Etat != scan.ResultatScan.Etat)
+                                    {
+                                        await context.AddAsync(scan.ResultatScan);
+                                        await context.SaveChangesAsync();
+                                        ChangementStock.Add(new(scan, dernierPrix.Etat));
+
+                                    }
+                                    else if (dernierPrix.Prix != scan.ResultatScan.Prix)
+                                    {
+                                        await context.AddAsync(scan.ResultatScan);
+                                        await context.SaveChangesAsync();
+                                        ChangementPrix.Add(new(scan, dernierPrix.Prix));
+
+                                    }
+                                }
+                                else
+                                {
+                                    await context.AddAsync(scan.ResultatScan);
+                                    await context.SaveChangesAsync();
+                                    nouveauxProduits.Add(scan);
+                                }
+                            }
+                            else
+                            {
+                                await context.AddAsync(scan.ResultatScan);
+                                await context.SaveChangesAsync();
+                                nouveauxProduits.Add(scan);
+                            }
                         }
                     }
-                    await SendDiscordMessage(webhookUrl, produits.Where(x=>x.Etat==Etat.En_stock));
 
                 }
-                await SendDiscordMessage(webhookUrl, "Fin du scan V2");
-            }
 
-            Console.ReadLine();
+                if (nouveauxProduits.Count != 0)
+                {
+                    await SendDiscordMessageNouveauxProduits(webhookUrl, nouveauxProduits);
+                }
+                if (ChangementPrix.Count != 0)
+                {
+                    await SendDiscordMessageNouveauxProduits(webhookUrl, ChangementPrix);
+                }
+                if (ChangementStock.Count != 0)
+                {
+                    await SendDiscordMessageNouveauxProduits(webhookUrl, ChangementStock);
+                }
+
+                await SendDiscordMessage(webhookUrl, "Fin du scan V3");
+            }
         }
 
-        private static async Task SendDiscordMessage(string webhookUrl, IEnumerable<Produit> produits)
+        private static async Task SendDiscordMessageNouveauxProduits(string webhookUrl, List<Tuple<Scan, Etat>> changementStock)
         {
             try
             {
                 using (HttpClient client = new HttpClient())
                 {
-                    var batches = produits.Chunk(10);
+                    var batches = changementStock.Chunk(10);
 
                     foreach (var batch in batches)
                     {
@@ -68,18 +124,19 @@ namespace Sylvain
                         {
                             embeds = batch.Select(produit => new
                             {
-                                title = produit.Site,
-                                description = produit.Titre,
+                                title = produit.Item1.Produit.Site,
+                                description = $"Changement de disponibilité",
                                 //color = 16711680, // Rouge en RGB décimal
                                 fields = new[]
                                 {
-                                new { name = "Prix", value = produit.Prix, inline = false },
-                                new { name = "Stock", value = produit.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
+                                new { name = "Produit", value = produit.Item1.Produit.Titre, inline = false },
+                                new { name = "Prix", value = produit.Item1.ResultatScan.Prix.ToString("C"), inline = false },
+                                new { name = "Stock", value = produit.Item1.ResultatScan.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
                             },
-                                url = produit.Url,
+                                url = produit.Item1.Produit.Url,
                                 image = new
                                 {
-                                    url = produit.Image
+                                    url = produit.Item1.Produit.Image
                                 },
                                 footer = new
                                 {
@@ -108,7 +165,142 @@ namespace Sylvain
             }
         }
 
-        static async Task<Produit?> ScanProducts(IWebDriver driver, string searchUrl)
+        private static async Task SendDiscordMessageNouveauxProduits(string webhookUrl, List<Tuple<Scan, float>> changementPrix)
+        {
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    var batches = changementPrix.Chunk(10);
+
+                    foreach (var batch in batches)
+                    {
+                        var payload = new
+                        {
+                            embeds = batch.Select(produit => new
+                            {
+                                title = produit.Item1.Produit.Site,
+                                description = $"Changement de prix",
+                                //color = 16711680, // Rouge en RGB décimal
+                                fields = new[]
+                                {
+                                new { name = "Produit", value = produit.Item1.Produit.Titre, inline = false },
+                                new { name = "Prix", value = $"{produit.Item1.ResultatScan.Prix:C} (Ancien prix : {produit.Item2:C}) ", inline = false },
+                                new { name = "Stock", value = produit.Item1.ResultatScan.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
+                            },
+                                url = produit.Item1.Produit.Url,
+                                image = new
+                                {
+                                    url = produit.Item1.Produit.Image
+                                },
+                                footer = new
+                                {
+                                    text = $"Scan effectué à {DateTime.Now:T}"
+                                }
+                            })
+
+                        };
+
+                        var jsonPayload = new StringContent(
+                            Newtonsoft.Json.JsonConvert.SerializeObject(payload),
+                            Encoding.UTF8,
+                            "application/json"
+                        );
+
+                        HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
+
+                        response.EnsureSuccessStatusCode();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                Debug.WriteLine(ex.Message);
+            }
+
+        }
+
+        private static async Task SendDiscordMessageNouveauxProduits(string webhookUrl, List<Scan> nouveauxProduits)
+        {
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    var batches = nouveauxProduits.Chunk(10);
+
+                    foreach (var batch in batches)
+                    {
+                        var payload = new
+                        {
+                            embeds = batch.Select(produit => new
+                            {
+                                title = produit.Produit.Site,
+                                description = $"Nouveau produit : {produit.Produit.Titre}",
+                                //color = 16711680, // Rouge en RGB décimal
+                                fields = new[]
+                                {
+                                new { name = "Prix", value = produit.ResultatScan.Prix.ToString("C"), inline = false },
+                                new { name = "Stock", value = produit.ResultatScan.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
+                            },
+                                url = produit.Produit.Url,
+                                image = new
+                                {
+                                    url = produit.Produit.Image
+                                },
+                                footer = new
+                                {
+                                    text = $"Scan effectué à {DateTime.Now:T}"
+                                }
+                            })
+
+                        };
+
+                        var jsonPayload = new StringContent(
+                            Newtonsoft.Json.JsonConvert.SerializeObject(payload),
+                            Encoding.UTF8,
+                            "application/json"
+                        );
+
+                        HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
+
+                        response.EnsureSuccessStatusCode();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                Debug.WriteLine(ex.Message);
+            }
+
+        }
+
+        static async Task SendDiscordMessage(string webhookUrl, string message)
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                var payload = new
+                {
+                    content = message// Le contenu du message
+                };
+
+                var jsonPayload = new StringContent(
+                    Newtonsoft.Json.JsonConvert.SerializeObject(payload),
+                    Encoding.UTF8,
+                    "application/json"
+                );
+
+                HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new Exception($"Échec de la requête. Code statut : {response.StatusCode}");
+                }
+            }
+        }
+
+        static async Task<Scan?> ScanProducts(IWebDriver driver, string searchUrl)
         {
             string title = string.Empty;
 
@@ -137,7 +329,7 @@ namespace Sylvain
                 var price = priceElement?.Text;
 
                 string image = string.Empty;
-                if (IsElementPresent(driver,By.ClassName("slide_nav")))
+                if (IsElementPresent(driver, By.ClassName("slide_nav")))
                 {
                     var imageElement = driver.FindElement(By.ClassName("slide_nav"));
                     var a = imageElement.FindElement(By.TagName("img"));
@@ -149,7 +341,7 @@ namespace Sylvain
                     image = "https:" + imageElement.GetDomAttribute("src");
                 }
 
-                
+
 
                 Uri uri = new Uri(searchUrl);
                 string host = uri.Host;
@@ -164,7 +356,8 @@ namespace Sylvain
                     Console.WriteLine($"Prix : {price}");
                     Console.WriteLine($"Etat : {etat}");
 
-                    return new Produit(Guid.NewGuid(), title, etatEnum, price, searchUrl, image, siteName);
+                    Guid id = Guid.NewGuid();
+                    return new Scan(new Produit(id, title, searchUrl, image, siteName), new HistoriquePrix(DateTimeOffset.Now.ToUnixTimeSeconds(), etatEnum, float.Parse(price.Replace("€", ""))) { IdProduit = id });
                 }
                 else
                 {
@@ -178,9 +371,9 @@ namespace Sylvain
 
             return null;
         }
-        static async Task<ICollection<Produit>> ScanProductsV2(IWebDriver driver, string searchUrl)
+        static async Task<ICollection<Scan>> ScanProductsV2(IWebDriver driver, string searchUrl)
         {
-            List<Produit> liste = [];
+            List<Scan> liste = [];
             try
             {
                 Uri uri = new Uri(searchUrl);
@@ -235,86 +428,11 @@ namespace Sylvain
             return liste;
         }
 
-        static async Task SendDiscordMessage(string webhookUrl, Produit produit)
-        {
-            try
-            {
-                using (HttpClient client = new HttpClient())
-                {
-                    var payload = new
-                    {
-                        embeds = new[]
-                {
-                new
-                {
-                    title = produit.Site,
-                    description = produit.Titre,
-                    //color = 16711680, // Rouge en RGB décimal
-                    fields = new[]
-                    {
-                        new { name = "Prix", value = produit.Prix, inline = false },
-                        new { name = "Stock", value = produit.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
-
-                    },
-                    url=produit.Url,
-                    image = new
-                    {
-                        url=produit.Image
-                    },
-                    footer = new
-                    {
-                        text = $"Scan effectué à {DateTime.Now:T}"
-                    }
-                }
-            }
-                    };
-
-                    var jsonPayload = new StringContent(
-                        Newtonsoft.Json.JsonConvert.SerializeObject(payload),
-                        Encoding.UTF8,
-                        "application/json"
-                    );
-
-                    HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
-
-                    response.EnsureSuccessStatusCode();
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex);
-                Debug.WriteLine(ex.Message);
-            }
-
-        }
-
-        static async Task SendDiscordMessage(string webhookUrl, string message)
-        {
-            using (HttpClient client = new HttpClient())
-            {
-                var payload = new
-                {
-                    content = message// Le contenu du message
-                };
-
-                var jsonPayload = new StringContent(
-                    Newtonsoft.Json.JsonConvert.SerializeObject(payload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
-
-                HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    throw new Exception($"Échec de la requête. Code statut : {response.StatusCode}");
-                }
-            }
-        }
-
         public static bool IsElementPresent(IWebDriver driver, By by)
         {
             return driver.FindElements(by).Count > 0;
         }
     }
+
+    public record Scan(Produit Produit, HistoriquePrix ResultatScan);
 }

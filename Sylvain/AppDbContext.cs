@@ -10,6 +10,7 @@ namespace Sylvain
     public class AppDbContext : DbContext
     {
         public DbSet<Produit> Products { get; set; } = null!;
+        public DbSet<HistoriquePrix> Prix { get; set; } = null!;
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
