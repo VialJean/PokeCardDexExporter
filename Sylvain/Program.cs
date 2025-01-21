@@ -32,8 +32,6 @@ namespace Sylvain
                 options.AddArgument("--disable-gpu");
                 options.AddArgument("--no-sandbox");
 
-                await SendDiscordMessage(webhookUrl, "Démarrage du scan V3");
-
                 using (IWebDriver driver = new ChromeDriver(options))
                 {
                     var scans = await ScanProductsV2(driver, "https://www.relictcg.com/collections/pokemon");
@@ -106,7 +104,6 @@ namespace Sylvain
                     await SendDiscordMessageNouveauxProduits(webhookUrl, ChangementStock);
                 }
 
-                await SendDiscordMessage(webhookUrl, "Fin du scan V3");
             }
         }
 
@@ -236,10 +233,11 @@ namespace Sylvain
                             embeds = batch.Select(produit => new
                             {
                                 title = produit.Produit.Site,
-                                description = $"Nouveau produit : {produit.Produit.Titre}",
+                                description = $"Nouveau produit",
                                 //color = 16711680, // Rouge en RGB décimal
                                 fields = new[]
                                 {
+                                new { name = "Produit", value = produit.Produit.Titre, inline = false },
                                 new { name = "Prix", value = produit.ResultatScan.Prix.ToString("C"), inline = false },
                                 new { name = "Stock", value = produit.ResultatScan.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
                             },
