@@ -1,299 +1,254 @@
-﻿using HtmlAgilityPack;
-using Microsoft.EntityFrameworkCore;
+﻿using Newtonsoft.Json;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
-using OpenQA.Selenium.Interactions;
 using OpenQA.Selenium.Support.UI;
-using System;
 using System.Diagnostics;
-using System.Text;
-using static System.Net.WebRequestMethods;
+using WebDriverManager;
+using WebDriverManager.DriverConfigs.Impl;
 
-namespace Sylvain
+namespace PokeCardDexExporter
 {
     internal partial class Program
     {
-        const string webhookUrl = "https://discord.com/api/webhooks/1328486528657395803/sr-jfgq2c-WlnQOgzxoTL1zEil3xxtz2w7LpCHc3veCmISMS6Q4Dd-f5o7fX28rGhqGJ";
-
+        private static string[] extensions = [
+            "SVI",
+            "PAL",
+            "OBF",
+            "MEW",
+            "PAR",
+            "PAF",
+            "TEF",
+            "TWM",
+            "SFA",
+            "SCR",
+            "SSP",
+            "PRE",
+            "JTG",
+        ];
+        public static bool premierScan = true;
         static async Task Main(string[] args)
         {
-            using (var context = new AppDbContext())
+            List<Carte> cartes = [];
+            Stopwatch stopwatch = new Stopwatch();
+
+            Console.WriteLine("---------------------------------------------------------------------------------------------");
+            Console.WriteLine("Sélectionner l'extension à scanner");
+            Console.WriteLine("Extensions disponibles :");
+            foreach (var extension in extensions)
             {
-                // Appliquer les migrations (crée la base de données si elle n'existe pas)
-                context.Database.EnsureCreated();
-                Console.WriteLine("Base de données initialisée.");
+                Console.WriteLine(extension);
+            }
+            Console.WriteLine("* : Scanner toutes les extensions");
+            Console.WriteLine("---------------------------------------------------------------------------------------------");
 
-                var options = new ChromeOptions();
-                options.AddArgument("--headless"); // Mode headless pour ne pas afficher le navigateur
-                options.AddArgument("--disable-gpu");
-                options.AddArgument("--no-sandbox");
+            var choix = Console.ReadLine();
+            if (choix != null)
+            {
+                stopwatch.Start();
 
-                await SendDiscordMessage(webhookUrl, "Démarrage du scan V2");
 
-                using (IWebDriver driver = new ChromeDriver(options))
+                if (choix == "*")
                 {
-                    var produits = await ScanProductsV2(driver, "https://www.relictcg.com/collections/pokemon");
-                    //var produits = await context.Products.ToListAsync();
-
-                    foreach (var produit in produits)
+                    Console.WriteLine("Début de l'export");
+                    var driver = await LancerDriver();
+                    foreach (var extension in extensions)
                     {
-                        var produitInDb = context.Products.SingleOrDefault(x => x.Site == produit.Site && x.Titre == produit.Titre);
-                        if (produitInDb == null)
-                        {
-                            await context.AddAsync(produit);
-                            await context.SaveChangesAsync();
-
-                        }
-                        await SendDiscordMessage(webhookUrl, produits);
+                        ScanCartes(driver, extension, cartes);
                     }
+                    await File.WriteAllTextAsync("collection.json", JsonConvert.SerializeObject(cartes, Formatting.Indented));
+
+                    Console.WriteLine($"Export réalisé en {stopwatch.Elapsed.TotalSeconds} secondes");
+                    driver.Quit();
+                    driver.Dispose();
                 }
-                await SendDiscordMessage(webhookUrl, "Fin du scan V2");
-            }
-
-            Console.ReadLine();
-        }
-
-        private static async Task SendDiscordMessage(string webhookUrl, ICollection<Produit> produits)
-        {
-            try
-            {
-                using (HttpClient client = new HttpClient())
+                else if (extensions.Contains(choix))
                 {
 
+                    Console.WriteLine("Début de l'export");
+                    var driver = await LancerDriver();
 
-                    var payload = new
-                    {
-                        embeds = produits.Select(produit => new
-                        {
-                            title = produit.Site,
-                            description = produit.Titre,
-                            //color = 16711680, // Rouge en RGB décimal
-                            fields = new[]
-                            {
-                                new { name = "Prix", value = produit.Prix, inline = false },
-                                new { name = "Stock", value = produit.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
-                            },
-                            url = produit.Url,
-                            image = new
-                            {
-                                url = produit.Image
-                            },
-                            footer = new
-                            {
-                                text = $"Scan effectué à {DateTime.Now:T}"
-                            }
-                        })
+                    ScanCartes(driver, choix, cartes);
+                    await File.WriteAllTextAsync($"{choix}.json", JsonConvert.SerializeObject(cartes, Formatting.Indented));
 
-                    };
+                    driver.Quit();
+                    driver.Dispose();
 
-                    var jsonPayload = new StringContent(
-                        Newtonsoft.Json.JsonConvert.SerializeObject(payload),
-                        Encoding.UTF8,
-                        "application/json"
-                    );
-
-                    HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
-
-                    response.EnsureSuccessStatusCode();
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex);
-                Debug.WriteLine(ex.Message);
-            }
-        }
-
-        static async Task<Produit?> ScanProducts(IWebDriver driver, string searchUrl)
-        {
-            string title=string.Empty;
-
-            try
-            {
-                driver.SwitchTo().NewWindow(WindowType.Window);
-
-                await driver.Navigate().GoToUrlAsync(searchUrl);
-
-                var titleElement = driver.FindElement(By.CssSelector("h1.product__title"));
-
-                if (titleElement == null)
-                {
-                    Console.WriteLine($"Titre introuvable");
                 }
                 else
                 {
-                    title = titleElement?.Text;
-                }
-
-                var buyButtonElement = driver.FindElement(By.ClassName("product-form__submit"));
-                var etat = buyButtonElement.Enabled ? "En stock" : "Epuisé";
-                Etat etatEnum = buyButtonElement.Enabled ? Etat.En_stock : Etat.Epuise;
-
-                var priceElement = driver.FindElement(By.ClassName("price-item"));
-                var price = priceElement?.Text;
-
-                var imageElement = driver.FindElement(By.ClassName("image_zoom_box_src"));
-                var image = "https:" + imageElement.GetDomAttribute("src");
-
-                Uri uri = new Uri(searchUrl);
-                string host = uri.Host;
-                string siteName = host.StartsWith("www.") ? host.Substring(4) : host;
-
-                driver.Close();
-                driver.SwitchTo().Window(driver.WindowHandles[0]);
-
-                if (title != null && buyButtonElement != null && price != null)
-                {
-                    Console.WriteLine($"Produit : {title}");
-                    Console.WriteLine($"Prix : {price}");
-                    Console.WriteLine($"Etat : {etat}");
-
-                    return new Produit(Guid.NewGuid(), title, etatEnum, price, searchUrl, image, siteName);
-                }
-                else
-                {
-                    Console.WriteLine("Aucun produit correspondant trouvé avec ce sélecteur XPath.");
+                    Console.WriteLine($"Extension {choix} non reconnue");
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Erreur lors du scan : {ex.Message}");
-            }
-
-            return null;
+            stopwatch.Stop();
         }
-        static async Task<ICollection<Produit>> ScanProductsV2(IWebDriver driver, string searchUrl)
+
+        public static async Task<ChromeDriver> LancerDriver()
         {
-            List<Produit> liste = [];
-            try
+            new DriverManager().SetUpDriver(new ChromeConfig());
+            ChromeDriverService service = ChromeDriverService.CreateDefaultService();
+            service.SuppressInitialDiagnosticInformation = true;
+            service.EnableVerboseLogging = false;
+            var options = new ChromeOptions();
+            options.AddArguments("--silent");
+            var driver = new ChromeDriver(service, options);
+
+            await driver.Navigate().GoToUrlAsync("https://www.pokecardex.com/forums/ucp.php?mode=login&redirect=index.php");
+            Console.WriteLine();
+            Console.WriteLine("---------------------------------------------------------------------------------------------");
+            Console.WriteLine("En attente de l'affichage de la page https://www.pokecardex.com/collection après connexion...");
+            Console.WriteLine("---------------------------------------------------------------------------------------------");
+            Console.WriteLine();
+
+            WebDriverWait wait = new WebDriverWait(driver, TimeSpan.FromMinutes(2));
+
+            wait.Until(d => d.Url == "https://www.pokecardex.com/collection");
+            return driver;
+        }
+
+        static void ScanCartes(ChromeDriver driver, string extension, List<Carte> cartes)
+        {
+            Console.WriteLine($"Export de l'extension {extension}...");
+            int carteIndex = 1;
+            WaitUntilElementExists(driver, By.XPath("//*[@id=\"selection-serie\"]"));
+            var a = driver.FindElement(By.XPath("//*[@id=\"selection-serie\"]"));
+            a.Click();
+            WaitUntilElementExists(driver, By.XPath($"//*[@id=\"{extension}\"]"));
+
+            var b = driver.FindElement(By.XPath($"//*[@id=\"{extension}\"]"));
+            int max = int.Parse(b.GetDomAttribute("data-total"));
+
+            b.Click();
+
+            var gridView = WaitUntilElementExists(driver, By.XPath("//*[@id=\"grid_view\"]"));
+
+            var premiereCarte = gridView.FindElement(By.XPath("div[1]"));
+
+            premiereCarte.Click();
+
+            WaitForClass(driver, By.XPath("//*[@id=\"modalDetailsCarte\"]"), "show");
+
+            if (premierScan)
             {
-                Uri uri = new Uri(searchUrl);
-                string host = uri.Host;
-                await driver.Navigate().GoToUrlAsync(searchUrl);
+                var collection = WaitUntilElementExists(driver, By.XPath("//*[@id=\"tableaux\"]/div[1]/div/h6"));
 
-                bool fin = false;
-                do
+                collection.Click();
+                var doubles = WaitUntilElementExists(driver, By.XPath("//*[@id=\"tableaux\"]/div[4]/div/h6"));
+                doubles.Click();
+
+                premierScan = false;
+            }
+
+            do
+            {
+                Carte carte = new(extension, carteIndex);
+                string carteId = WaitUntilElementExists(driver, By.XPath("//*[@id=\"card-id-badge\"]")).Text;
+
+                var table = WaitUntilElementExists(driver, By.XPath($"//*[@id=\"table-collection-{carteId}\"]"));
+
+                var lignes = table.FindElements(By.TagName("tr"));
+
+                WaitForClass(driver, By.XPath("//*[@id=\"card-collection\"]"), "show");
+
+                if (lignes.Count > 1)
                 {
-                    Debug.WriteLine($"Scan de la page {driver.Url}");
-                    string urlActuelle = driver.Url;
-
-                    var listElements = driver.FindElement(By.CssSelector("ul.snize-search-results-content"));
-
-                    foreach (var element in listElements.FindElements(By.CssSelector("li")))
+                    foreach (var ligne in lignes.Skip(1))
                     {
-                        var linkElement = element.FindElement(By.ClassName("snize-view-link"));
-                        if (linkElement != null)
+                        string quantiteText = WaitUntilElementExists(driver, element: ligne, By.ClassName("quantite")).Text;
+                        var quantite = int.Parse(quantiteText);
+                        var version = WaitUntilElementExists(Driver: driver, element: ligne, By.ClassName("version")).Text;
+
+                        if (version == "Normale")
                         {
-                            var link = uri.GetLeftPart(UriPartial.Scheme) + host + linkElement.GetDomAttribute("href");
-
-
-                            var produit = await ScanProducts(driver, link);
-                            if (produit != null)
-                            {
-                                liste.Add(produit);
-
-                            }
-
+                            carte.QuantiteNormale = quantite;
+                        }
+                        else if (version == "Reverse")
+                        {
+                            carte.QuantiteReverse = quantite;
                         }
                     }
+                }
 
-                    var nextButtonElement = driver.FindElement(By.CssSelector("a.snize-pagination-next"));
-                    if (nextButtonElement != null)
-                    {
-                        nextButtonElement.Click();
-                        // Attendre la fin de la redirection (par exemple, attendre un changement d'URL)
-                        WebDriverWait wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
-                        wait.Until(d => d.Url != urlActuelle);
-                    }
-                    else
-                    {
-                        fin = true;
-                    }
-                } while (!fin);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Erreur lors du scan : {ex.Message}");
-            }
+                table = WaitUntilElementExists(driver, By.XPath($"//*[@id=\"table-possessions-{carteId}\"]"));
 
-            return liste;
+                lignes = table.FindElements(By.TagName("tr"));
+
+                if (lignes.Count > 1)
+                {
+                    foreach (var ligne in lignes.Skip(1))
+                    {
+                        string quantiteText = WaitUntilElementExists(driver, element: ligne, By.ClassName("quantite")).Text;
+                        var quantite = int.Parse(quantiteText);
+                        var version = WaitUntilElementExists(Driver: driver, element: ligne, By.ClassName("version")).Text;
+
+                        if (version == "Normale")
+                        {
+                            carte.QuantiteNormale += quantite;
+                        }
+                        else if (version == "Reverse")
+                        {
+                            carte.QuantiteReverse += quantite;
+                        }
+                    }
+                }
+
+
+                cartes.Add(carte);
+
+                driver.FindElement(By.XPath("//*[@id=\"next-card\"]")).Click();
+                carteIndex++;
+            }
+            while (carteIndex != max);
+
+            driver.FindElement(By.XPath("//*[@id=\"modalDetailsCarte\"]/div/div/div[1]/button")).Click();
+
+            Console.WriteLine($"Export de l'extension {extension} terminé");
         }
 
-        static async Task SendDiscordMessage(string webhookUrl, Produit produit)
+        public static IWebElement WaitUntilElementExists(IWebDriver Driver, By elementLocator, int timeout = 10)
         {
             try
             {
-                using (HttpClient client = new HttpClient())
-                {
-                    var payload = new
-                    {
-                        embeds = new[]
-                {
-                new
-                {
-                    title = produit.Site,
-                    description = produit.Titre,
-                    //color = 16711680, // Rouge en RGB décimal
-                    fields = new[]
-                    {
-                        new { name = "Prix", value = produit.Prix, inline = false },
-                        new { name = "Stock", value = produit.Etat == Etat.En_stock ? "En stock" : "Épuisé", inline = false },
-
-                    },
-                    url=produit.Url,
-                    image = new
-                    {
-                        url=produit.Image
-                    },
-                    footer = new
-                    {
-                        text = $"Scan effectué à {DateTime.Now:T}"
-                    }
-                }
+                var wait = new WebDriverWait(Driver, TimeSpan.FromSeconds(timeout)) { PollingInterval = TimeSpan.FromMilliseconds(10) };
+                return wait.Until(x => x.FindElement(elementLocator));
             }
-                    };
-
-                    var jsonPayload = new StringContent(
-                        Newtonsoft.Json.JsonConvert.SerializeObject(payload),
-                        Encoding.UTF8,
-                        "application/json"
-                    );
-
-                    HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
-
-                    response.EnsureSuccessStatusCode();
-                }
-            }
-            catch (Exception ex)
+            catch (NoSuchElementException)
             {
-                Console.WriteLine(ex);
-                Debug.WriteLine(ex.Message);
+                Console.WriteLine("Element with locator: '" + elementLocator + "' was not found in current context page.");
+                throw;
             }
-
         }
 
-        static async Task SendDiscordMessage(string webhookUrl, string message)
+        public static IWebElement WaitUntilElementExists(IWebDriver Driver, IWebElement element, By elementLocator, int timeout = 10)
         {
-            using (HttpClient client = new HttpClient())
+            try
             {
-                var payload = new
-                {
-                    content = message// Le contenu du message
-                };
-
-                var jsonPayload = new StringContent(
-                    Newtonsoft.Json.JsonConvert.SerializeObject(payload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
-
-                HttpResponseMessage response = await client.PostAsync(webhookUrl, jsonPayload);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    throw new Exception($"Échec de la requête. Code statut : {response.StatusCode}");
-                }
+                var wait = new WebDriverWait(Driver, TimeSpan.FromSeconds(timeout)) { PollingInterval = TimeSpan.FromMilliseconds(10) };
+                return wait.Until(x => element.FindElement(elementLocator));
+            }
+            catch (NoSuchElementException)
+            {
+                Console.WriteLine("Element with locator: '" + elementLocator + "' was not found in current context page.");
+                throw;
             }
         }
+
+        public static void WaitForClass(IWebDriver driver, By by, string className, int timeoutSeconds = 10)
+        {
+            WebDriverWait wait = new WebDriverWait(driver, TimeSpan.FromSeconds(timeoutSeconds));
+
+            wait.Until(drv =>
+            {
+                var element = drv.FindElement(by);
+                string classes = element.GetDomAttribute("class");
+                return classes != null && classes.Split(' ').Contains(className);
+            });
+        }
+
+    }
+
+    public record Carte(string Extension, int Numero)
+    {
+        public int QuantiteNormale { get; set; }
+        public int QuantiteReverse { get; set; }
     }
 }
