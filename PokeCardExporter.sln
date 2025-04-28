@@ -5,6 +5,8 @@ VisualStudioVersion = 17.12.35527.113
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PokeCardDexExporter", "Sylvain\PokeCardDexExporter.csproj", "{F2950C43-CE28-4DDD-BEE6-50B381E818C5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PokeScanner", "PokeScanner\PokeScanner.csproj", "{05FB67D2-CFB6-48B5-A8AD-C9B3C275EDCD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{F2950C43-CE28-4DDD-BEE6-50B381E818C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F2950C43-CE28-4DDD-BEE6-50B381E818C5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F2950C43-CE28-4DDD-BEE6-50B381E818C5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{05FB67D2-CFB6-48B5-A8AD-C9B3C275EDCD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{05FB67D2-CFB6-48B5-A8AD-C9B3C275EDCD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{05FB67D2-CFB6-48B5-A8AD-C9B3C275EDCD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{05FB67D2-CFB6-48B5-A8AD-C9B3C275EDCD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
