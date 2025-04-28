@@ -6,7 +6,6 @@ public class ImageComparerService
 {
     private Mat LoadImageFromStream(Stream stream)
     {
-        // Copier les données pour éviter de modifier le stream original
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
         var data = ms.ToArray();
@@ -26,25 +25,23 @@ public class ImageComparerService
         orb.Compute(img2, ref keyPoints2, descriptors2);
 
         if (descriptors1.Empty() || descriptors2.Empty())
-            return double.MaxValue; // Impossible de comparer
+            return double.MaxValue;
 
         using var bf = new BFMatcher(NormTypes.Hamming, crossCheck: true);
         var matches = bf.Match(descriptors1, descriptors2);
 
         if (matches.Length == 0)
-            return double.MaxValue; // Pas de matches = score très mauvais
+            return double.MaxValue;
 
-        double averageDistance = matches.Average(m => m.Distance);
-
-        return averageDistance;
+        return matches.Average(m => m.Distance);
     }
 
     public async Task<(string BestMatchName, double BestScore)> FindBestMatchAsync(Stream pickedImageStream, IEnumerable<string> resourcePaths)
     {
         double bestScore = double.MaxValue;
         string bestMatch = null!;
+        var locker = new object(); // Pour sécuriser accès multi-thread
 
-        // Charger une seule fois l'image capturée
         pickedImageStream.Seek(0, SeekOrigin.Begin);
         using var pickedImageCopy = new MemoryStream();
         await pickedImageStream.CopyToAsync(pickedImageCopy);
@@ -52,20 +49,22 @@ public class ImageComparerService
 
         using var pickedImageMat = LoadImageFromStream(pickedImageCopy);
 
-        foreach (var resourcePath in resourcePaths)
+        await Parallel.ForEachAsync(resourcePaths, async (resourcePath, token) =>
         {
             await using var resourceStream = await FileSystem.OpenAppPackageFileAsync(resourcePath);
-
             using var resourceImageMat = LoadImageFromStream(resourceStream);
 
             var score = CompareImages(pickedImageMat, resourceImageMat);
 
-            if (score < bestScore)
+            lock (locker) // Empêcher les threads d'écraser les résultats
             {
-                bestScore = score;
-                bestMatch = resourcePath;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestMatch = resourcePath;
+                }
             }
-        }
+        });
 
         return (bestMatch, bestScore);
     }
