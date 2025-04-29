@@ -4,6 +4,13 @@ namespace PokeScanner.Services;
 
 public class ImageComparerService
 {
+    private readonly ReferenceCardCacheService referenceCardCacheService;
+
+    public ImageComparerService(ReferenceCardCacheService referenceCardCacheService)
+    {
+        this.referenceCardCacheService = referenceCardCacheService;
+    }
+
     private Mat LoadImageFromStream(Stream stream)
     {
         using var ms = new MemoryStream();
@@ -78,4 +85,42 @@ public class ImageComparerService
 
         return (bestMatch, bestScore);
     }
+
+    public async Task<(string BestMatchName, double BestScore)> FindBestMatchAsync(Stream pickedImageStream)
+    {
+        double bestScore = double.MaxValue;
+        string bestMatch = null!;
+
+        var cropper = new CardCropperService();
+        using var pickedMat = LoadImageFromStream(pickedImageStream);
+        var croppedPicked = cropper.DetectAndCropCard(pickedMat) ?? pickedMat;
+        croppedPicked.SaveImage("Test.webp");
+
+        using var orb = ORB.Create();
+        var keyPoints1 = orb.Detect(croppedPicked);
+        using var descriptors1 = new Mat();
+        orb.Compute(croppedPicked, ref keyPoints1, descriptors1);
+
+        foreach (var carte in referenceCardCacheService.Cartes)
+        {
+
+
+            using var bf = new BFMatcher(NormTypes.Hamming, crossCheck: true);
+            var matches = bf.Match(descriptors1, carte.Descriptors);
+            double score = matches.Average(m => m.Distance);
+
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestMatch = carte.Path;
+            }
+
+            // Important : remettre pickedImageStream au début
+            if (pickedImageStream.CanSeek)
+                pickedImageStream.Seek(0, SeekOrigin.Begin);
+        }
+
+        return (bestMatch, bestScore);
+    }
+
 }

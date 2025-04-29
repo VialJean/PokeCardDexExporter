@@ -6,17 +6,17 @@ namespace PokeScanner;
 
 public partial class MainViewModel : ObservableObject
 {
-    private readonly ImageComparerService _comparerService = new ImageComparerService();
-
+    private readonly ImageComparerService imageComparerService;
     [ObservableProperty]
     private string result;
 
     [ObservableProperty]
     private string imageSource;
 
-    public MainViewModel()
+    public MainViewModel(ImageComparerService imageComparerService)
     {
         Result = string.Empty;
+        this.imageComparerService = imageComparerService;
     }
 
     [RelayCommand]
@@ -36,7 +36,7 @@ public partial class MainViewModel : ObservableObject
 
         await using var pickedStream = await picked.OpenReadAsync(); ;
 
-        var (bestMatchPath, bestScore) = await _comparerService.FindBestMatchAsync(pickedStream, allCardPaths);
+        var (bestMatchPath, bestScore) = await imageComparerService.FindBestMatchAsync(pickedStream);
 
         if (bestScore < 40)
         {

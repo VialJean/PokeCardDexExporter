@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using PokeScanner.Services;
 
 namespace PokeScanner
 {
@@ -16,8 +17,11 @@ namespace PokeScanner
                 });
 
 #if DEBUG
-    		builder.Logging.AddDebug();
+            builder.Logging.AddDebug();
 #endif
+            builder.Services.AddSingleton<ImageComparerService>();
+            builder.Services.AddSingleton<ReferenceCardCacheService>();
+            builder.Services.AddSingleton<MainViewModel>();
 
             return builder.Build();
         }
