@@ -40,31 +40,41 @@ public class ImageComparerService
     {
         double bestScore = double.MaxValue;
         string bestMatch = null!;
-        var locker = new object(); // Pour sécuriser accès multi-thread
 
-        pickedImageStream.Seek(0, SeekOrigin.Begin);
-        using var pickedImageCopy = new MemoryStream();
-        await pickedImageStream.CopyToAsync(pickedImageCopy);
-        pickedImageCopy.Seek(0, SeekOrigin.Begin);
-
-        using var pickedImageMat = LoadImageFromStream(pickedImageCopy);
-
-        await Parallel.ForEachAsync(resourcePaths, async (resourcePath, token) =>
+        var cropper = new CardCropperService();
+        using var pickedMat = LoadImageFromStream(pickedImageStream);
+        var croppedPicked = cropper.DetectAndCropCard(pickedMat) ?? pickedMat;
+        croppedPicked.SaveImage("Test.webp");
+        foreach (var resourcePath in resourcePaths)
         {
             await using var resourceStream = await FileSystem.OpenAppPackageFileAsync(resourcePath);
-            using var resourceImageMat = LoadImageFromStream(resourceStream);
+            using var referenceMat = LoadImageFromStream(resourceStream);
 
-            var score = CompareImages(pickedImageMat, resourceImageMat);
 
-            lock (locker) // Empêcher les threads d'écraser les résultats
+            using var orb = ORB.Create();
+            var keyPoints1 = orb.Detect(croppedPicked);
+            var keyPoints2 = orb.Detect(referenceMat);
+
+            using var descriptors1 = new Mat();
+            using var descriptors2 = new Mat();
+
+            orb.Compute(croppedPicked, ref keyPoints1, descriptors1);
+            orb.Compute(referenceMat, ref keyPoints2, descriptors2);
+
+            using var bf = new BFMatcher(NormTypes.Hamming, crossCheck: true);
+            var matches = bf.Match(descriptors1, descriptors2);
+            double score = matches.Average(m => m.Distance);
+
+            if (score < bestScore)
             {
-                if (score < bestScore)
-                {
-                    bestScore = score;
-                    bestMatch = resourcePath;
-                }
+                bestScore = score;
+                bestMatch = resourcePath;
             }
-        });
+
+            // Important : remettre pickedImageStream au début
+            if (pickedImageStream.CanSeek)
+                pickedImageStream.Seek(0, SeekOrigin.Begin);
+        }
 
         return (bestMatch, bestScore);
     }
