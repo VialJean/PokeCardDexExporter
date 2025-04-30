@@ -2,9 +2,43 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:local="clr-namespace:PokeScanner"
+             xmlns:toolkit="http://schemas.microsoft.com/dotnet/2022/maui/toolkit"
+             x:DataType="local:MainViewModel"
              x:Class="PokeScanner.MainPage">
 
     <VerticalStackLayout Padding="20">
+        <Grid ColumnDefinitions="*,*,*" RowDefinitions="*,30,30">
+            <toolkit:CameraView 
+                x:Name="cameraView"
+            Grid.ColumnSpan="3" 
+            Grid.Row="0"
+            SelectedCamera="{Binding SelectedCamera}"
+            ZoomFactor="{Binding CurrentZoom}"
+            CameraFlashMode="{Binding FlashMode}" />
+
+            <Slider 
+            Grid.Column="0"
+            Grid.Row="1"
+            Value="{Binding CurrentZoom}"
+            Maximum="{Binding SelectedCamera.MaximumZoomFactor, FallbackValue=1}"
+            Minimum="{Binding SelectedCamera.MinimumZoomFactor, FallbackValue=1}"/>
+
+            <Picker 
+            Grid.Column="1"
+            Grid.Row="1"
+            Title="Flash"
+            IsVisible="{Binding Path=SelectedCamera.IsFlashSupported, FallbackValue=false}"
+            ItemsSource="{Binding FlashModes}"
+            SelectedItem="{Binding FlashMode}" />
+
+            <Picker 
+            Grid.Column="2"
+            Grid.Row="1"
+            Title="Available Resolutions"
+            ItemsSource="{Binding SelectedCamera.SupportedResolutions}"
+            SelectedItem="{Binding SelectedResolution}" />
+        </Grid>
+        <Button Text="Demarrer le scan" Clicked="Button_Clicked"/>
         <Button Text="Choisir une image" Command="{Binding PickAndCompareCommand}" />
         <Label Text="{Binding Result}" 
                FontSize="20" 

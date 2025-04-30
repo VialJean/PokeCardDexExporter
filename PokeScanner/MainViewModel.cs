@@ -1,4 +1,6 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Maui.Core;
+using CommunityToolkit.Maui.Core.Primitives;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PokeScanner.Services;
 
@@ -13,10 +15,27 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string imageSource;
 
+    [ObservableProperty]
+    private CameraInfo selectedCamera;
+
+    [ObservableProperty]
+    private float currentZoom;
+
+    [ObservableProperty]
+    private CameraFlashMode flashMode;
+
+    [ObservableProperty]
+    private Size selectedResolution;
+
     public MainViewModel(ImageComparerService imageComparerService)
     {
         Result = string.Empty;
         this.imageComparerService = imageComparerService;
+    }
+
+    partial void OnSelectedCameraChanged(CameraInfo? oldValue, CameraInfo newValue)
+    {
+
     }
 
     [RelayCommand]
@@ -37,6 +56,22 @@ public partial class MainViewModel : ObservableObject
         await using var pickedStream = await picked.OpenReadAsync(); ;
 
         var (bestMatchPath, bestScore) = await imageComparerService.FindBestMatchAsync(pickedStream);
+
+        if (bestScore < 40)
+        {
+            var cardName = System.IO.Path.GetFileNameWithoutExtension(bestMatchPath);
+            ImageSource = bestMatchPath;
+            Result = $"Carte reconnue : {cardName} (Score {bestScore:F2})";
+        }
+        else
+        {
+            Result = $"Aucune correspondance. Meilleur score : {bestScore:F2}";
+        }
+    }
+
+    public async Task NouvelleImage(Stream media)
+    {
+        var (bestMatchPath, bestScore) = await imageComparerService.FindBestMatchAsync(media);
 
         if (bestScore < 40)
         {

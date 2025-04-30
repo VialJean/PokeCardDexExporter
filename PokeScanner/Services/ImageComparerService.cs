@@ -92,35 +92,42 @@ public class ImageComparerService
         string bestMatch = null!;
 
         var cropper = new CardCropperService();
-        using var pickedMat = LoadImageFromStream(pickedImageStream);
-        var croppedPicked = cropper.DetectAndCropCard(pickedMat) ?? pickedMat;
-        croppedPicked.SaveImage("Test.webp");
-
-        using var orb = ORB.Create();
-        var keyPoints1 = orb.Detect(croppedPicked);
-        using var descriptors1 = new Mat();
-        orb.Compute(croppedPicked, ref keyPoints1, descriptors1);
-
-        foreach (var carte in referenceCardCacheService.Cartes)
+        try
         {
+            using var pickedMat = LoadImageFromStream(pickedImageStream);
+            var croppedPicked = cropper.DetectAndCropCard(pickedMat) ?? pickedMat;
+            croppedPicked.SaveImage("Test.webp");
 
+            using var orb = ORB.Create();
+            var keyPoints1 = orb.Detect(croppedPicked);
+            using var descriptors1 = new Mat();
+            orb.Compute(croppedPicked, ref keyPoints1, descriptors1);
 
-            using var bf = new BFMatcher(NormTypes.Hamming, crossCheck: true);
-            var matches = bf.Match(descriptors1, carte.Descriptors);
-            double score = matches.Average(m => m.Distance);
-
-            if (score < bestScore)
+            foreach (var carte in referenceCardCacheService.Cartes)
             {
-                bestScore = score;
-                bestMatch = carte.Path;
+
+
+                using var bf = new BFMatcher(NormTypes.Hamming, crossCheck: true);
+                var matches = bf.Match(descriptors1, carte.Descriptors);
+                double score = matches.Average(m => m.Distance);
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestMatch = carte.Path;
+                }
+
+                // Important : remettre pickedImageStream au début
+                if (pickedImageStream.CanSeek)
+                    pickedImageStream.Seek(0, SeekOrigin.Begin);
             }
 
-            // Important : remettre pickedImageStream au début
-            if (pickedImageStream.CanSeek)
-                pickedImageStream.Seek(0, SeekOrigin.Begin);
+            return (bestMatch, bestScore);
         }
-
-        return (bestMatch, bestScore);
+        catch (Exception ex)
+        {
+            return (bestMatch, bestScore);
+        }
     }
 
 }
