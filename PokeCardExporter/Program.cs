@@ -11,6 +11,7 @@ namespace PokeCardDexExporter
     internal partial class Program
     {
         private static string[] extensions = [
+            "SVP",
             "SVI",
             "PAL",
             "OBF",
