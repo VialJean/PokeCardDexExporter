@@ -25,7 +25,9 @@ namespace PokeCardDexExporter
             "SSP",
             "PRE",
             "JTG",
-            "DRI"
+            "DRI",
+            "BLK",
+            "WHT"
         ];
         public static bool premierScan = true;
         static async Task Main(string[] args)
