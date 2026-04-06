@@ -3,6 +3,7 @@ using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using WebDriverManager;
 using WebDriverManager.DriverConfigs.Impl;
 
@@ -27,7 +28,12 @@ namespace PokeCardDexExporter
             "JTG",
             "DRI",
             "BLK",
-            "WHT"
+            "WHT",
+            "MEP",
+            "MEG",
+            "PFL",
+            "ASC",
+            "POR"
         ];
         public static bool premierScan = true;
         static async Task Main(string[] args)
@@ -113,98 +119,107 @@ namespace PokeCardDexExporter
         {
             Console.WriteLine($"Export de l'extension {extension}...");
             int carteIndex = 1;
-            WaitUntilElementExists(driver, By.XPath("//*[@id=\"selection-serie\"]"));
-            var a = driver.FindElement(By.XPath("//*[@id=\"selection-serie\"]"));
+            int max = 0;
+            var a = WaitUntilElementExists(driver, By.XPath("//*[@id=\"root\"]/div[1]/div/div[2]/div[1]/button"));
             a.Click();
-            WaitUntilElementExists(driver, By.XPath($"//*[@id=\"{extension}\"]"));
+            var b = WaitUntilElementExists(driver, By.CssSelector($"img[src*='{extension}.png']"));
+            var parent = b.FindElement(By.XPath("../.."));
+            var span = parent.FindElement(By.TagName("span"));
+            var text = span.GetAttribute("textContent");
 
-            var b = driver.FindElement(By.XPath($"//*[@id=\"{extension}\"]"));
-            int max = int.Parse(b.GetDomAttribute("data-total"));
+            var match = Regex.Match(text, @"\((\d+)/(\d+)\)");
+            if (match.Success)
+            {
+                max = int.Parse(match.Groups[2].Value);
+            }
 
             b.Click();
 
-            var gridView = WaitUntilElementExists(driver, By.XPath("//*[@id=\"grid_view\"]"));
+            var gridView = WaitUntilElementExists(driver, By.XPath("//*[@id=\"root\"]/div[2]/div/div/div/div"));
 
             var premiereCarte = gridView.FindElement(By.XPath("div[1]"));
 
             premiereCarte.Click();
 
-            WaitForClass(driver, By.XPath("//*[@id=\"modalDetailsCarte\"]"), "show");
+            var modal = WaitUntilElementExists(driver, By.CssSelector("div[role='dialog'][data-state='open']"));
 
-            if (premierScan)
-            {
-                var collection = WaitUntilElementExists(driver, By.XPath("//*[@id=\"tableaux\"]/div[1]/div/h6"));
+            //if (premierScan)
+            //{
+            //    var collection = WaitUntilElementExists(driver, By.XPath("//*[@id=\"tableaux\"]/div[1]/div/h6"));
 
-                collection.Click();
-                var doubles = WaitUntilElementExists(driver, By.XPath("//*[@id=\"tableaux\"]/div[4]/div/h6"));
-                doubles.Click();
+            //    collection.Click();
+            //    var doubles = WaitUntilElementExists(driver, By.XPath("//*[@id=\"tableaux\"]/div[4]/div/h6"));
+            //    doubles.Click();
 
-                premierScan = false;
-            }
+            //    premierScan = false;
+            //}
 
             do
             {
                 Carte carte = new(extension, carteIndex);
-                string carteId = WaitUntilElementExists(driver, By.XPath("//*[@id=\"card-id-badge\"]")).Text;
 
-                var table = WaitUntilElementExists(driver, By.XPath($"//*[@id=\"table-collection-{carteId}\"]"));
+                var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
 
-                var lignes = table.FindElements(By.TagName("tr"));
+                // 1. Attendre la modale
+                var dialog = wait.Until(d =>
+                    d.FindElement(By.CssSelector("div[role='dialog'][data-state='open']"))
+                );
 
-                WaitForClass(driver, By.XPath("//*[@id=\"card-collection\"]"), "show");
+                var title = dialog.FindElement(By.XPath(".//span[contains(@class,'text-2xl')]")).Text;
 
-                if (lignes.Count > 1)
+                // 2. Récupérer les lignes du tableau (Ma collection)
+                var lignes = dialog.FindElements(By.XPath(".//table//tbody/tr"));
+
+                foreach (var ligne in lignes)
                 {
-                    foreach (var ligne in lignes.Skip(1))
-                    {
-                        string quantiteText = WaitUntilElementExists(driver, element: ligne, By.ClassName("quantite")).Text;
-                        var quantite = int.Parse(quantiteText);
-                        var version = WaitUntilElementExists(Driver: driver, element: ligne, By.ClassName("version")).Text;
+                    var tds = ligne.FindElements(By.TagName("td"));
 
-                        if (version == "Normale")
-                        {
-                            carte.QuantiteNormale = quantite;
-                        }
-                        else if (version == "Reverse")
-                        {
-                            carte.QuantiteReverse = quantite;
-                        }
+                    if (tds.Count < 4)
+                        continue;
+
+                    // 3. Version (colonne 2)
+                    var version = tds[1].Text.Trim();
+
+                    // 4. Quantité (colonne 4)
+                    var quantiteText = tds[3].Text.Trim();
+                    var quantite = int.Parse(quantiteText);
+
+                    if (version.Contains("Normale"))
+                    {
+                        carte.QuantiteNormale += quantite;
+                    }
+                    else if (version.Contains("Reverse"))
+                    {
+                        carte.QuantiteReverse += quantite;
                     }
                 }
-
-                table = WaitUntilElementExists(driver, By.XPath($"//*[@id=\"table-possessions-{carteId}\"]"));
-
-                lignes = table.FindElements(By.TagName("tr"));
-
-                if (lignes.Count > 1)
-                {
-                    foreach (var ligne in lignes.Skip(1))
-                    {
-                        string quantiteText = WaitUntilElementExists(driver, element: ligne, By.ClassName("quantite")).Text;
-                        var quantite = int.Parse(quantiteText);
-                        var version = WaitUntilElementExists(Driver: driver, element: ligne, By.ClassName("version")).Text;
-
-                        if (version == "Normale")
-                        {
-                            carte.QuantiteNormale += quantite;
-                        }
-                        else if (version == "Reverse")
-                        {
-                            carte.QuantiteReverse += quantite;
-                        }
-                    }
-                }
-
 
                 cartes.Add(carte);
 
-                driver.FindElement(By.XPath("//*[@id=\"next-card\"]")).Click();
+                // 5. Bouton "Carte suivante"
+                var nextBtn = dialog.FindElement(By.XPath(".//button[contains(., 'Carte suivante')]"));
+                nextBtn.Click();
+
+                // 6. Attendre que la carte change (super important sinon stale element)
+                if (carteIndex + 1 < max)
+                {
+                    wait.Until(d =>
+                            {
+                                var newTitle = d.FindElement(By.XPath("//div[@role='dialog']//span[contains(@class,'text-2xl')]")).Text;
+                                return newTitle != title;
+                            });
+                }
+
                 carteIndex++;
+
             }
             while (carteIndex != max);
 
-            driver.FindElement(By.XPath("//*[@id=\"modalDetailsCarte\"]/div/div/div[1]/button")).Click();
+            var closeBtn = driver.FindElement(By.XPath(
+                "//div[@role='dialog']//h2//button"
+            ));
 
+            closeBtn.Click();
             Console.WriteLine($"Export de l'extension {extension} terminé");
         }
 
@@ -245,6 +260,17 @@ namespace PokeCardDexExporter
                 var element = drv.FindElement(by);
                 string classes = element.GetDomAttribute("class");
                 return classes != null && classes.Split(' ').Contains(className);
+            });
+        }
+
+        public static void WaitForNextCard(IWebDriver driver)
+        {
+            WebDriverWait wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+            wait.Until(d =>
+            {
+                var newDialog = d.FindElement(By.CssSelector("div[role='dialog'][data-state='open']"));
+                var title = newDialog.FindElement(By.XPath(".//span[contains(@class,'text-2xl')]")).Text;
+                return !string.IsNullOrWhiteSpace(title);
             });
         }
 
