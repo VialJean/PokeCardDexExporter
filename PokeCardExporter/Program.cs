@@ -1,6 +1,6 @@
 ﻿using Newtonsoft.Json;
 using OpenQA.Selenium;
-using OpenQA.Selenium.Chrome;
+using OpenQA.Selenium.Edge;
 using OpenQA.Selenium.Support.UI;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -92,15 +92,10 @@ namespace PokeCardDexExporter
             stopwatch.Stop();
         }
 
-        public static async Task<ChromeDriver> LancerDriver()
+        public static async Task<EdgeDriver> LancerDriver()
         {
-            new DriverManager().SetUpDriver(new ChromeConfig());
-            ChromeDriverService service = ChromeDriverService.CreateDefaultService();
-            service.SuppressInitialDiagnosticInformation = true;
-            service.EnableVerboseLogging = false;
-            var options = new ChromeOptions();
-            options.AddArguments("--silent");
-            var driver = new ChromeDriver(service, options);
+            var exe = new DriverManager().SetUpDriver(new EdgeConfig());
+            var driver = new EdgeDriver();
 
             await driver.Navigate().GoToUrlAsync("https://www.pokecardex.com/forums/ucp.php?mode=login&redirect=index.php");
             Console.WriteLine();
@@ -115,7 +110,7 @@ namespace PokeCardDexExporter
             return driver;
         }
 
-        static void ScanCartes(ChromeDriver driver, string extension, List<Carte> cartes)
+        static void ScanCartes(IWebDriver driver, string extension, List<Carte> cartes)
         {
             Console.WriteLine($"Export de l'extension {extension}...");
             int carteIndex = 1;
@@ -133,26 +128,15 @@ namespace PokeCardDexExporter
                 max = int.Parse(match.Groups[2].Value);
             }
 
-            b.Click();
+            parent.Click();
 
             var gridView = WaitUntilElementExists(driver, By.XPath("//*[@id=\"root\"]/div[2]/div/div/div/div"));
 
-            var premiereCarte = gridView.FindElement(By.XPath("div[1]"));
+            var premiereCarte = WaitUntilElementExists(driver, gridView, By.XPath("div[1]"));
 
             premiereCarte.Click();
 
             var modal = WaitUntilElementExists(driver, By.CssSelector("div[role='dialog'][data-state='open']"));
-
-            //if (premierScan)
-            //{
-            //    var collection = WaitUntilElementExists(driver, By.XPath("//*[@id=\"tableaux\"]/div[1]/div/h6"));
-
-            //    collection.Click();
-            //    var doubles = WaitUntilElementExists(driver, By.XPath("//*[@id=\"tableaux\"]/div[4]/div/h6"));
-            //    doubles.Click();
-
-            //    premierScan = false;
-            //}
 
             do
             {
@@ -166,6 +150,7 @@ namespace PokeCardDexExporter
                 );
 
                 var title = dialog.FindElement(By.XPath(".//span[contains(@class,'text-2xl')]")).Text;
+                var number = dialog.FindElement(By.XPath("//div[@role='dialog']//span[contains(@class,'text-sm')]")).Text;
 
                 // 2. Récupérer les lignes du tableau (Ma collection)
                 var lignes = dialog.FindElements(By.XPath(".//table//tbody/tr"));
@@ -205,8 +190,8 @@ namespace PokeCardDexExporter
                 {
                     wait.Until(d =>
                             {
-                                var newTitle = d.FindElement(By.XPath("//div[@role='dialog']//span[contains(@class,'text-2xl')]")).Text;
-                                return newTitle != title;
+                                var newNumber = d.FindElement(By.XPath("//div[@role='dialog']//span[contains(@class,'text-sm')]")).Text;
+                                return newNumber != number;
                             });
                 }
 
