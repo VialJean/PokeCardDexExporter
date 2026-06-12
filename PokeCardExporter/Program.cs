@@ -12,12 +12,6 @@ namespace PokeCardDexExporter
 {
     internal partial class Program
     {
-        private static readonly string[] extensions = [
-            "SVP", "SVI", "PAL", "OBF", "MEW", "PAR", "PAF", "TEF", "TWM",
-            "SFA", "SCR", "SSP", "PRE", "JTG", "DRI", "BLK", "WHT", "MEP",
-            "MEG", "PFL", "ASC", "POR", "CRI"
-        ];
-
         // Intercepte fetch + XHR et stocke chaque réponse dans window.__pcxReponses
         private const string ScriptIntercepteur = """
             if (!window.__pcxIntercepteurActif) {
@@ -51,43 +45,83 @@ namespace PokeCardDexExporter
             }
         """;
 
-        static async Task Main(string[] args)
+        static async Task Main(string[] _)
         {
             var cartes = new List<Carte>();
             var sw = Stopwatch.StartNew();
 
-            Console.WriteLine("---------------------------------------------------------------------------------------------");
-            Console.WriteLine("Extensions disponibles :");
-            Console.WriteLine(string.Join("  ", extensions));
-            Console.WriteLine("* : Toutes les extensions");
-            Console.WriteLine("---------------------------------------------------------------------------------------------");
-
-            var choix = Console.ReadLine()?.Trim().ToUpper();
-            if (string.IsNullOrEmpty(choix)) return;
-
             var driver = await LancerDriver();
 
-            // Injecter l'intercepteur une seule fois après le login
             driver.ExecuteScript(ScriptIntercepteur);
             Console.WriteLine("Intercepteur réseau activé.");
 
+            var series = await LireSeriesDepuisPage(driver);
+            if (series.Count == 0)
+            {
+                Console.WriteLine("Impossible de lire les séries depuis la page de collection.");
+                driver.Quit();
+                return;
+            }
+            var toutesExtensions = series.SelectMany(s => s.Codes).Distinct().ToArray();
+
+            Console.WriteLine("---------------------------------------------------------------------------------------------");
+            for (int i = 0; i < series.Count; i++)
+            {
+                var (nom, codes) = series[i];
+                Console.WriteLine($"  {i + 1}. {nom} : {string.Join("  ", codes)}");
+            }
+            Console.WriteLine($"* : Tout  |  1-{series.Count} : par série  |  MEG,POR : codes séparés par virgules");
+            Console.WriteLine("---------------------------------------------------------------------------------------------");
+
+            var choix = Console.ReadLine()?.Trim().ToUpper();
+            if (string.IsNullOrEmpty(choix)) { driver.Quit(); return; }
+
+            string[] extensionsAScanner;
             if (choix == "*")
             {
-                foreach (var ext in extensions)
-                    await ScannerExtensionAsync(driver, ext, cartes);
-
-                await File.WriteAllTextAsync("collection.json", JsonConvert.SerializeObject(cartes, Formatting.Indented));
-                Console.WriteLine($"\nExport complet en {sw.Elapsed.TotalSeconds:F1}s → collection.json ({cartes.Count} cartes)");
-            }
-            else if (extensions.Contains(choix))
-            {
-                await ScannerExtensionAsync(driver, choix, cartes);
-                await File.WriteAllTextAsync($"{choix}.json", JsonConvert.SerializeObject(cartes, Formatting.Indented));
-                Console.WriteLine($"\nExport {choix} en {sw.Elapsed.TotalSeconds:F1}s → {choix}.json ({cartes.Count} cartes)");
+                extensionsAScanner = toutesExtensions;
             }
             else
             {
-                Console.WriteLine($"Extension '{choix}' non reconnue.");
+                var codesResolus = new List<string>();
+                var invalides = new List<string>();
+                foreach (var part in choix.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (int.TryParse(part, out var idx) && idx >= 1 && idx <= series.Count)
+                        codesResolus.AddRange(series[idx - 1].Codes);
+                    else if (toutesExtensions.Contains(part))
+                        codesResolus.Add(part);
+                    else
+                        invalides.Add(part);
+                }
+                if (invalides.Count > 0)
+                    Console.WriteLine($"Entrées non reconnues ignorées : {string.Join(", ", invalides)}");
+                extensionsAScanner = [.. codesResolus.Distinct()];
+                if (extensionsAScanner.Length == 0)
+                {
+                    Console.WriteLine("Aucune extension valide saisie.");
+                    driver.Quit();
+                    return;
+                }
+            }
+
+            foreach (var ext in extensionsAScanner)
+            {
+                var cartesExt = new List<Carte>();
+                await ScannerExtensionAsync(driver, ext, cartesExt);
+                cartes.AddRange(cartesExt);
+                await File.WriteAllTextAsync($"{ext}.json", JsonConvert.SerializeObject(cartesExt, Formatting.Indented));
+                Console.WriteLine($"  → {ext}.json ({cartesExt.Count} cartes)");
+            }
+
+            if (extensionsAScanner.Length > 1)
+            {
+                await File.WriteAllTextAsync("collection.json", JsonConvert.SerializeObject(cartes, Formatting.Indented));
+                Console.WriteLine($"\nExport complet en {sw.Elapsed.TotalSeconds:F1}s → collection.json ({cartes.Count} cartes)");
+            }
+            else
+            {
+                Console.WriteLine($"\nExport en {sw.Elapsed.TotalSeconds:F1}s → {extensionsAScanner[0]}.json ({cartes.Count} cartes)");
             }
 
             driver.Quit();
@@ -113,6 +147,53 @@ namespace PokeCardDexExporter
             return driver;
         }
 
+        static async Task<List<(string Nom, string[] Codes)>> LireSeriesDepuisPage(EdgeDriver driver)
+        {
+            var bouton = Attendre(driver, By.CssSelector("button[aria-label='Sélectionner une série']"), 5);
+            if (bouton == null) return [];
+
+            driver.ExecuteScript("arguments[0].click();", bouton);
+            await Task.Delay(500);
+
+            if (Attendre(driver, By.CssSelector("div[role='dialog'][data-state='open']"), 5) == null)
+                return [];
+
+            // Extraire les séries et leurs extensions via JS
+            // Chaque bloc série dans la dialog = div avec h2 (nom) + images symboles (codes)
+            var raw = driver.ExecuteScript("""
+                return Array.from(document.querySelectorAll(
+                    "div[role='dialog'][data-state='open'] .space-y-4 > div"
+                )).map(block => {
+                    const h2 = block.querySelector('h2');
+                    if (!h2) return null;
+                    const codes = Array.from(block.querySelectorAll("img[src*='symboles'][alt]"))
+                        .map(img => img.alt).filter(Boolean);
+                    return codes.length > 0 ? { nom: h2.textContent.trim(), codes } : null;
+                }).filter(Boolean);
+                """);
+
+            var result = new List<(string Nom, string[] Codes)>();
+            if (raw is IList<object> rawList)
+            {
+                foreach (var item in rawList)
+                {
+                    if (item is not IDictionary<string, object> dict) continue;
+                    var nom = dict["nom"]?.ToString() ?? "";
+                    var codes = (dict["codes"] as IList<object>)
+                        ?.Select(c => c?.ToString() ?? "").Where(c => c.Length > 0).ToArray() ?? [];
+                    if (nom.Length > 0 && codes.Length > 0)
+                        result.Add((nom, codes));
+                }
+            }
+
+            // Fermer la dialog sans sélectionner
+            try { driver.FindElement(By.TagName("body")).SendKeys(Keys.Escape); }
+            catch { driver.ExecuteScript("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));"); }
+
+            await Task.Delay(300);
+            return result;
+        }
+
         // ─── Scanner principal ────────────────────────────────────────────────────
 
         static async Task ScannerExtensionAsync(EdgeDriver driver, string extension, List<Carte> cartes)
@@ -128,7 +209,7 @@ namespace PokeCardDexExporter
                 Console.WriteLine($"[{extension}] Bouton de sélection de série introuvable.");
                 return;
             }
-            boutonSerie.Click();
+            driver.ExecuteScript("arguments[0].click();", boutonSerie);
 
             // La sélection s'ouvre dans une dialog Radix UI.
             // Chaque bouton d'extension contient une image symbole avec alt = code extension (ex: alt="POR").
@@ -147,39 +228,6 @@ namespace PokeCardDexExporter
             // Lire le total depuis le texte mis à jour du bouton de sélection
             int total = LireTotalDepuisBouton(driver);
             Console.WriteLine($"[{extension}] {total} cartes attendues.");
-
-            // Attendre des réponses API (max 10 s)
-            var waitApi = new WebDriverWait(driver, TimeSpan.FromSeconds(10)) { PollingInterval = TimeSpan.FromMilliseconds(100) };
-            bool apiCapturee = false;
-            try
-            {
-                waitApi.Until(_ => (long)(driver.ExecuteScript("return window.__pcxReponses.length;") ?? 0L) > 0);
-                apiCapturee = true;
-            }
-            catch (WebDriverTimeoutException) { }
-
-            if (apiCapturee)
-            {
-                var reponses = RecupererReponses(driver);
-                Console.WriteLine($"[{extension}] {reponses.Count} requête(s) API capturée(s).");
-
-                foreach (var (url, body) in reponses)
-                {
-                    var cartesApi = TenterParserReponse(body, extension);
-                    if (cartesApi.Count > 0)
-                    {
-                        Console.WriteLine($"[{extension}] {cartesApi.Count} cartes depuis l'API ({url})");
-                        cartes.AddRange(cartesApi);
-                        return;
-                    }
-                }
-
-                Console.WriteLine($"[{extension}] Structure API non reconnue — passage en mode modal.");
-            }
-            else
-            {
-                Console.WriteLine($"[{extension}] Aucune réponse API — passage en mode modal.");
-            }
 
             await ScannerModales(driver, extension, cartes, total);
         }
@@ -342,6 +390,7 @@ namespace PokeCardDexExporter
             {
                 try
                 {
+                    Console.WriteLine($"[{extension}] Carte {scannees + 1}/{total}...");
                     // Ignorer les cartes non possédées : tous les boutons de version ont opacity-
                     // var vImgs = item.FindElements(By.XPath(".//button[contains(@class,'size-6')]//img[@alt]"));
                     // if (vImgs.Count > 0 && vImgs.All(img => (img.GetAttribute("class") ?? "").Contains("opacity-")))

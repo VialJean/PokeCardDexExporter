@@ -8,10 +8,20 @@
     <Version>1.5.1</Version>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <Configuration>Release</Configuration>
+    <Platform>Any CPU</Platform>
+    <PublishDir>bin\Release\net9.0\publish\win-x64\</PublishDir>
+    <PublishProtocol>FileSystem</PublishProtocol>
+    <_TargetId>Folder</_TargetId>
+    <TargetFramework>net9.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="HtmlAgilityPack" Version="1.11.72" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.1" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Selenium.WebDriver" Version="4.41.0" />
     <PackageReference Include="WebDriverManager" Version="2.17.7" />
